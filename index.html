@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AV COMPOSSESSER v6.6.6</title>
+    <style>
+        :root { --glow: #00ff41; --bg: #050505; }
+        body { background: var(--bg); color: var(--glow); font-family: 'Courier New', monospace; text-align: center; padding: 15px; margin: 0; }
+        .console { border: 2px solid #222; background: #000; padding: 20px; border-radius: 5px; max-width: 450px; margin: auto; box-shadow: 0 0 30px rgba(0,255,65,0.1); }
+        canvas { width: 100%; image-rendering: pixelated; border: 2px solid #111; margin: 15px 0; background: #000; }
+        .knob-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; text-align: left; font-size: 10px; }
+        input[type="range"] { width: 100%; accent-color: var(--glow); cursor: crosshair; }
+        .btn { background: var(--glow); color: #000; border: none; padding: 15px; width: 100%; font-weight: 900; margin-top: 15px; letter-spacing: 2px; }
+        .btn:active { opacity: 0.5; }
+        #dlBtn { background: #fff; display: none; color: #000; }
+        .status { font-size: 9px; margin-top: 10px; color: #444; }
+    </style>
+</head>
+<body>
+
+<div class="console">
+    <h2 style="margin:0; font-size: 18px;">AV COMPOSSESSER</h2>
+    <p style="font-size: 8px; margin-bottom: 20px;">SYSTEM STATUS: READY TO WASH</p>
+
+    <input type="file" id="vidIn" accept="video/*" style="font-size: 10px; color: #555;">
+    
+    <canvas id="scr"></canvas>
+
+    <div class="knob-grid">
+        <div>
+            <label>DATA WASH (4kHz/1kbps)</label>
+            <input type="range" id="wash" min="0" max="100" value="80">
+        </div>
+        <div>
+            <label>STORM INTENSITY</label>
+            <input type="range" id="rain" min="0" max="100" value="40">
+        </div>
+        <div>
+            <label>VISUAL DECAY</label>
+            <input type="range" id="decay" min="0" max="100" value="10">
+        </div>
+        <div>
+            <label>FRAME SKIP (LAG)</label>
+            <input type="range" id="lag" min="0" max="100" value="0">
+        </div>
+    </div>
+
+    <button id="recBtn" class="btn">INITIALIZE RECORDING</button>
+    <button id="dlBtn" class="btn">SAVE PROCESSED DATA</button>
+    <div class="status" id="stat">WAITING FOR INPUT...</div>
+</div>
+
+<video id="v" playsinline muted loop style="display:none"></video>
+
+<script>
+    const video = document.getElementById('v');
+    const canvas = document.getElementById('scr');
+    const ctx = canvas.getContext('2d', {alpha: false});
+    const recBtn = document.getElementById('recBtn');
+    const dlBtn = document.getElementById('dlBtn');
+    const stat = document.getElementById('stat');
+
+    const W = 240, H = 160;
+    canvas.width = W; canvas.height = H;
+
+    let audioCtx, streamDest, recorder, chunks = [];
+    let rainGain, washNode;
+    let frameCount = 0;
+
+    document.getElementById('vidIn').onchange = (e) => {
+        video.src = URL.createObjectURL(e.target.files[0]);
+        video.play();
+        stat.innerText = "DATA RECEIVED. PROCESSING...";
+        if (!audioCtx) setupAudio();
+        render();
+    };
+
+    function setupAudio() {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        streamDest = audioCtx.createMediaStreamDestination();
+        
+        // INTERNAL RAIN ENGINE (White Noise + Low Pass)
+        const bufferSize = audioCtx.sampleRate * 2;
+        const noiseBuffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+        const data = noiseBuffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+
+        const rainSource = audioCtx.createBufferSource();
+        rainSource.buffer = noiseBuffer;
+        rainSource.loop = true;
+        
+        rainGain = audioCtx.createGain();
+        const rainFilter = audioCtx.createBiquadFilter();
+        rainFilter.type = 'lowpass';
+        rainFilter.frequency.value = 800;
+
+        rainSource.connect(rainFilter);
+        rainFilter.connect(rainGain);
+        rainGain.connect(streamDest);
+        rainSource.start();
+
+        // THE DATA WASHER (Custom Bitcrusher & Sample Rate Reducer)
+        washNode = audioCtx.createScriptProcessor(4096, 1, 1);
+        let phaser = 0;
+        let lastVal = 0;
+
+        washNode.onaudioprocess = (e) => {
+            const input = e.inputBuffer.getChannelData(0);
+            const output = e.outputBuffer.getChannelData(0);
+            const washVal = document.getElementById('wash').value / 100;
+            
+            // Simulating 4kHz and ultra low bitrate (1kbps)
+            const sampleSkip = Math.floor(1 + (washVal * 24)); 
+            const bitDepth = Math.max(1, 16 - (washVal * 15));
+
+            for (let i = 0; i < input.length; i++) {
+                if (phaser % sampleSkip === 0) {
+                    let step = Math.pow(2, bitDepth);
+                    lastVal = Math.round(input[i] * step) / step;
+                }
+                output[i] = lastVal + (Math.random() * 0.01 * washVal); // Added digital hiss
+                phaser++;
+            }
+        };
+
+        const source = audioCtx.createMediaElementSource(video);
+        source.connect(washNode);
+        washNode.connect(streamDest);
+    }
+
+    function render() {
+        if (video.paused) return;
+
+        const decay = document.getElementById('decay').value;
+        const lag = document.getElementById('lag').value;
+
+        // Frame Skip Logic
+        frameCount++;
+        if (lag > 0 && frameCount % Math.floor(11 - (lag/10)) === 0) {
+            requestAnimationFrame(render);
+            return; 
+        }
+
+        // Draw Base GBA Frame
+        ctx.drawImage(video, 0, 0, W, H);
+        
+        let id = ctx.getImageData(0,0,W,H);
+        let d = id.data;
+
+        for(let i=0; i<d.length; i+=4) {
+            // 15-bit Color Crush
+            d[i] = Math.floor(d[i]/16)*16;
+            d[i+1] = Math.floor(d[i+1]/16)*16;
+            d[i+2] = Math.floor(d[i+2]/16)*16;
+
+            // Decay Glitch (Red-shift and pixel drag)
+            if (decay > 0 && Math.random() < (decay/1000)) {
+                d[i] = 255; 
+                d[i+4] = d[i]; 
+            }
+        }
+        
+        ctx.putImageData(id, 0, 0);
+
+        // Update Rain Gain in real-time
+        if(rainGain) rainGain.gain.value = document.getElementById('rain').value / 250;
+
+        requestAnimationFrame(render);
+    }
+
+    recBtn.onclick = () => {
+        if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+
+        if (!recorder || recorder.state === "inactive") {
+            chunks = [];
+            const combined = new MediaStream([
+                canvas.captureStream(15).getTracks()[0], 
+                streamDest.stream.getTracks()[0]
+            ]);
+
+            recorder = new MediaRecorder(combined, { mimeType: 'video/mp4' });
+            recorder.ondataavailable = e => chunks.push(e.data);
+            recorder.onstop = () => {
+                const blob = new Blob(chunks, { type: 'video/mp4' });
+                const url = URL.createObjectURL(blob);
+                dlBtn.style.display = "block";
+                dlBtn.onclick = () => {
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = "compossessed_data.mp4";
+                    a.click();
+                    window.open(url, '_blank');
+                };
+            };
+
+            recorder.start();
+            recBtn.innerText = "RECORDING IN PROGRESS...";
+            recBtn.style.background = "#ff0000";
+            stat.innerText = "WASHING DATA... DO NOT DISCONNECT.";
+        } else {
+            recorder.stop();
+            recBtn.innerText = "INITIALIZE RECORDING";
+            recBtn.style.background = "var(--glow)";
+            stat.innerText = "COMPRESSION COMPLETE.";
+        }
+    };
+</script>
+</body>
+</html>
