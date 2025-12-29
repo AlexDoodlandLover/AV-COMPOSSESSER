@@ -1,120 +1,99 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-<meta charset="UTF-8">
-<title>Video Composesser™</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
+<title>Video Composesser™</title>
 <style>
   body {
-    background: #24170c;
+    background: #1f140a;
     color: #f3deb3;
     font-family: monospace;
     text-align: center;
     padding: 16px;
   }
-
-  h1 {
-    font-size: 1.6em;
-  }
-
-  input, button {
-    font-size: 1.1em;
-    margin-top: 12px;
-  }
-
-  button {
-    background: #6b4f2c;
-    color: white;
-    border: none;
-    padding: 12px 18px;
-    cursor: pointer;
-  }
-
-  video {
-    width: 100%;
-    max-width: 320px;
-    border: 6px solid #b08d57;
-    margin-top: 20px;
-  }
-
-  .hint {
-    font-size: 0.9em;
-    opacity: 0.8;
-  }
+  canvas { display: none; }
+  button { padding: 12px 18px; margin-top: 12px; }
 </style>
 </head>
 
 <body>
+<h2>🎞️ Video Composesser™</h2>
+<p>Now 100% FFmpeg-free.</p>
 
-<h1>🎞️ Video Composesser™</h1>
-<p class="hint">Intentionally ruins videos. Permanently.</p>
+<input type="file" id="file" accept="video/*"><br>
+<button onclick="composess()">Composess</button>
 
-<input type="file" id="upload" accept="video/*"><br>
-<button onclick="composess()">Composess Video</button>
+<canvas id="c"></canvas>
 
-<video id="preview" controls hidden></video>
+<script>
+const fileInput = document.getElementById("file");
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
 
-<script type="module">
-import { createFFmpeg, fetchFile } from "https://unpkg.com/@ffmpeg/ffmpeg@0.12.6/dist/ffmpeg.min.js";
+const ua = navigator.userAgent;
+const isIOS = /iPhone|iPad|iPod/i.test(ua);
+const isAndroid = /Android/i.test(ua);
 
-const ffmpeg = createFFmpeg({ log: false });
+function composess() {
+  const file = fileInput.files[0];
+  if (!file) return alert("give me a video");
 
-const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-const preview = document.getElementById("preview");
+  const video = document.createElement("video");
+  video.src = URL.createObjectURL(file);
+  video.muted = true;
+  video.play();
 
-if (!isMobile) preview.hidden = false;
+  video.onloadedmetadata = () => {
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
 
-async function composess() {
-  if (!ffmpeg.isLoaded()) await ffmpeg.load();
+    const stream = canvas.captureStream(12);
+    const recorder = new MediaRecorder(stream, { mimeType: "video/webm" });
+    const chunks = [];
 
-  const file = document.getElementById("upload").files[0];
-  if (!file) {
-    alert("give me a video to destroy");
-    return;
-  }
+    recorder.ondataavailable = e => chunks.push(e.data);
+    recorder.onstop = () => {
+      const blob = new Blob(chunks, { type: "video/webm" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "video_composessed.webm";
+      a.click();
+    };
 
-  ffmpeg.FS("writeFile", "input.mp4", await fetchFile(file));
+    recorder.start();
 
-  await ffmpeg.run(
-    "-i", "input.mp4",
+    function draw() {
+      if (video.paused || video.ended) {
+        recorder.stop();
+        return;
+      }
 
-    // visual violence
-    "-vf", "scale=128:96:flags=neighbor,eq=contrast=1.4:saturation=0.5,noise=alls=20:allf=t+u",
+      // base draw
+      const scale = isIOS ? 4 : isAndroid ? 6 : 8;
+      ctx.drawImage(video, 0, 0, canvas.width/scale, canvas.height/scale);
+      ctx.drawImage(canvas, 0, 0, canvas.width, canvas.height);
 
-    // time damage
-    "-r", "10",
+      let img = ctx.getImageData(0,0,canvas.width,canvas.height);
+      let d = img.data;
 
-    // ancient codec
-    "-c:v", "mpeg1video",
-    "-b:v", "180k",
-    "-g", "5",
-    "-q:v", "31",
+      for (let i = 0; i < d.length; i += 4) {
+        if (isIOS) {
+          d[i] = Math.min(255, d[i] * 1.1);
+          d[i+1] *= 0.9;
+        } else if (isAndroid) {
+          d[i] = Math.floor(d[i] / 48) * 48;
+        } else {
+          d[i] = d[i+4] || d[i];
+        }
+      }
 
-    // audio abuse
-    "-ar", "8000",
-    "-ac", "1",
-    "-b:a", "32k",
+      ctx.putImageData(img,0,0);
+      requestAnimationFrame(draw);
+    }
 
-    "video_composessed.mpg"
-  );
-
-  const data = ffmpeg.FS("readFile", "video_composessed.mpg");
-  const blob = new Blob([data.buffer], { type: "video/mpeg" });
-  const url = URL.createObjectURL(blob);
-
-  if (isMobile) {
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "video_composessed.mpg";
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-  } else {
-    preview.src = url;
-  }
+    draw();
+  };
 }
 </script>
-
 </body>
 </html>
