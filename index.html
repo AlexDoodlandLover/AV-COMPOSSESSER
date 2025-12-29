@@ -1,38 +1,52 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta charset="UTF-8">
 <title>Video Composesser™</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
 <style>
   body {
-    background: #1f140a;
-    color: #f3deb3;
-    font-family: monospace;
+    background: #2a2a2a;
+    color: #ddd;
+    font-family: system-ui, sans-serif;
     text-align: center;
     padding: 16px;
   }
-  canvas { display: none; }
-  button { padding: 12px 18px; margin-top: 12px; }
+
+  button, input {
+    margin-top: 12px;
+    font-size: 1em;
+  }
+
+  canvas {
+    display: none;
+  }
+
+  video {
+    margin-top: 16px;
+    width: 320px;
+    image-rendering: pixelated;
+  }
 </style>
 </head>
 
 <body>
-<h2>🎞️ Video Composesser™</h2>
-<p>Now 100% FFmpeg-free.</p>
+
+<h2>Video Composesser™</h2>
+<p>Intentionally ruins video. No frame. No mercy.</p>
 
 <input type="file" id="file" accept="video/*"><br>
 <button onclick="composess()">Composess</button>
 
+<video id="preview" controls></video>
 <canvas id="c"></canvas>
 
 <script>
 const fileInput = document.getElementById("file");
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
-
-const ua = navigator.userAgent;
-const isIOS = /iPhone|iPad|iPod/i.test(ua);
-const isAndroid = /Android/i.test(ua);
+const preview = document.getElementById("preview");
 
 function composess() {
   const file = fileInput.files[0];
@@ -44,8 +58,16 @@ function composess() {
   video.play();
 
   video.onloadedmetadata = () => {
+    const tinyW = 160;
+    const tinyH = Math.floor(tinyW * (video.videoHeight / video.videoWidth));
+
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
+
+    const tiny = document.createElement("canvas");
+    tiny.width = tinyW;
+    tiny.height = tinyH;
+    const tctx = tiny.getContext("2d");
 
     const stream = canvas.captureStream(12);
     const recorder = new MediaRecorder(stream, { mimeType: "video/webm" });
@@ -54,8 +76,11 @@ function composess() {
     recorder.ondataavailable = e => chunks.push(e.data);
     recorder.onstop = () => {
       const blob = new Blob(chunks, { type: "video/webm" });
+      const url = URL.createObjectURL(blob);
+      preview.src = url;
+
       const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
+      a.href = url;
       a.download = "video_composessed.webm";
       a.click();
     };
@@ -68,26 +93,29 @@ function composess() {
         return;
       }
 
-      // base draw
-      const scale = isIOS ? 4 : isAndroid ? 6 : 8;
-      ctx.drawImage(video, 0, 0, canvas.width/scale, canvas.height/scale);
-      ctx.drawImage(canvas, 0, 0, canvas.width, canvas.height);
+      // draw tiny
+      tctx.drawImage(video, 0, 0, tinyW, tinyH);
 
-      let img = ctx.getImageData(0,0,canvas.width,canvas.height);
+      // upscale brutally
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(tiny, 0, 0, canvas.width, canvas.height);
+
+      // slight blur pass
+      ctx.globalAlpha = 0.25;
+      ctx.drawImage(canvas, 1, 0);
+      ctx.globalAlpha = 1;
+
+      // color crush
+      let img = ctx.getImageData(0, 0, canvas.width, canvas.height);
       let d = img.data;
 
       for (let i = 0; i < d.length; i += 4) {
-        if (isIOS) {
-          d[i] = Math.min(255, d[i] * 1.1);
-          d[i+1] *= 0.9;
-        } else if (isAndroid) {
-          d[i] = Math.floor(d[i] / 48) * 48;
-        } else {
-          d[i] = d[i+4] || d[i];
-        }
+        d[i]     = Math.floor(d[i] / 64) * 64;
+        d[i + 1] = Math.floor(d[i + 1] / 64) * 64;
+        d[i + 2] = Math.floor(d[i + 2] / 64) * 64;
       }
 
-      ctx.putImageData(img,0,0);
+      ctx.putImageData(img, 0, 0);
       requestAnimationFrame(draw);
     }
 
@@ -95,5 +123,6 @@ function composess() {
   };
 }
 </script>
+
 </body>
 </html>
