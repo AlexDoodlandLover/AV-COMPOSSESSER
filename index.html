@@ -1,137 +1,120 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AV COMPOSSESSER v6.6.6 (REVISED)</title>
-    <style>
-        body { background: #000; color: #ff0000; font-family: 'Courier New', monospace; text-align: center; padding: 10px; }
-        .chassis { border: 3px solid #333; background: #111; padding: 20px; max-width: 440px; margin: auto; }
-        canvas { width: 100%; image-rendering: pixelated; border: 4px solid #000; background: #000; }
-        .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 10px; text-align: left; margin: 15px 0; }
-        input[type="range"] { width: 100%; accent-color: #ff0000; }
-        .btn { background: #ff0000; color: #000; border: none; padding: 15px; width: 100%; font-weight: 900; cursor: pointer; }
-        #dlBtn { background: #00ff41; display: none; margin-top: 10px; }
-    </style>
+<meta charset="UTF-8">
+<title>Video Composesser™</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<style>
+  body {
+    background: #24170c;
+    color: #f3deb3;
+    font-family: monospace;
+    text-align: center;
+    padding: 16px;
+  }
+
+  h1 {
+    font-size: 1.6em;
+  }
+
+  input, button {
+    font-size: 1.1em;
+    margin-top: 12px;
+  }
+
+  button {
+    background: #6b4f2c;
+    color: white;
+    border: none;
+    padding: 12px 18px;
+    cursor: pointer;
+  }
+
+  video {
+    width: 100%;
+    max-width: 320px;
+    border: 6px solid #b08d57;
+    margin-top: 20px;
+  }
+
+  .hint {
+    font-size: 0.9em;
+    opacity: 0.8;
+  }
+</style>
 </head>
+
 <body>
 
-<div class="chassis">
-    <h1>AV COMPOSSESSER v6.6.6</h1>
-    <p style="font-size: 9px;">BLOCK-COMPRESSION // 15-BIT CLAMP // DIRECT BAKE</p>
+<h1>🎞️ Video Composesser™</h1>
+<p class="hint">Intentionally ruins videos. Permanently.</p>
 
-    <input type="file" id="target" accept="video/*" style="font-size: 10px; margin-bottom: 10px;">
-    <canvas id="scr"></canvas>
+<input type="file" id="upload" accept="video/*"><br>
+<button onclick="composess()">Composess Video</button>
 
-    <div class="controls">
-        <div><label>BLOCK SIZE (CRUMMY)</label><input type="range" id="blockSize" min="2" max="16" value="8"></div>
-        <div><label>DATA WASH (4kHz)</label><input type="range" id="wash" min="0" max="100" value="90"></div>
-        <div><label>COLOR BLEED</label><input type="range" id="bleed" min="0" max="100" value="30"></div>
-        <div><label>STORM</label><input type="range" id="storm" min="0" max="100" value="40"></div>
-    </div>
+<video id="preview" controls hidden></video>
 
-    <button id="recBtn" class="btn">BAKE CURSED VIDEO</button>
-    <button id="dlBtn" class="btn">DOWNLOAD MP4</button>
-</div>
+<script type="module">
+import { createFFmpeg, fetchFile } from "https://unpkg.com/@ffmpeg/ffmpeg@0.12.6/dist/ffmpeg.min.js";
 
-<video id="v" playsinline muted loop style="display:none"></video>
+const ffmpeg = createFFmpeg({ log: false });
 
-<script>
-    const video = document.getElementById('v'), canvas = document.getElementById('scr'), ctx = canvas.getContext('2d');
-    const recBtn = document.getElementById('recBtn'), dlBtn = document.getElementById('dlBtn');
-    const W = 240, H = 160; canvas.width = W; canvas.height = H;
-    let audioCtx, streamDest, recorder, chunks = [], rainGain, washer;
+const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+const preview = document.getElementById("preview");
 
-    document.getElementById('target').onchange = (e) => {
-        video.src = URL.createObjectURL(e.target.files[0]);
-        video.play();
-        if(!audioCtx) setupAudio();
-        render();
-    };
+if (!isMobile) preview.hidden = false;
 
-    function setupAudio() {
-        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        streamDest = audioCtx.createMediaStreamDestination();
-        
-        // Storm Node
-        const noise = audioCtx.createBuffer(1, audioCtx.sampleRate * 2, audioCtx.sampleRate);
-        const d = noise.getChannelData(0);
-        for(let i=0; i<noise.length; i++) d[i] = Math.random() * 2 - 1;
-        const sSource = audioCtx.createBufferSource();
-        sSource.buffer = noise; sSource.loop = true;
-        rainGain = audioCtx.createGain();
-        const lp = audioCtx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 600;
-        sSource.connect(lp); lp.connect(rainGain); rainGain.connect(streamDest);
-        sSource.start();
+async function composess() {
+  if (!ffmpeg.isLoaded()) await ffmpeg.load();
 
-        // Washer Node
-        washer = audioCtx.createScriptProcessor(4096, 1, 1);
-        let ph = 0, hv = 0;
-        washer.onaudioprocess = (e) => {
-            const inD = e.inputBuffer.getChannelData(0), outD = e.outputBuffer.getChannelData(0);
-            const w = document.getElementById('wash').value / 100;
-            const skip = Math.floor(1 + (w * 30));
-            for(let j=0; j<inD.length; j++) {
-                if(ph % skip === 0) hv = Math.round(inD[j] * 16) / 16;
-                outD[j] = hv + (Math.random() * 0.02 * w);
-                ph++;
-            }
-        };
-        audioCtx.createMediaElementSource(video).connect(washer);
-        washer.connect(streamDest);
-    }
+  const file = document.getElementById("upload").files[0];
+  if (!file) {
+    alert("give me a video to destroy");
+    return;
+  }
 
-    function render() {
-        if(video.paused) return;
-        const b = parseInt(document.getElementById('blockSize').value);
-        const bleed = document.getElementById('bleed').value / 100;
+  ffmpeg.FS("writeFile", "input.mp4", await fetchFile(file));
 
-        // BLOCK COMPRESSION ENGINE
-        ctx.drawImage(video, 0, 0, W, H);
-        let id = ctx.getImageData(0,0,W,H), d = id.data;
+  await ffmpeg.run(
+    "-i", "input.mp4",
 
-        for(let y = 0; y < H; y += b) {
-            for(let x = 0; x < W; x += b) {
-                let i = (y * W + x) * 4;
-                // Grab block color
-                let r = Math.floor(d[i]/32)*32, g = Math.floor(d[i+1]/32)*32, b_c = Math.floor(d[i+2]/32)*32;
-                
-                // Draw block
-                ctx.fillStyle = `rgb(${r},${g},${b_c})`;
-                ctx.fillRect(x, y, b, b);
-            }
-        }
-        
-        // Add "Bleed" artifacts
-        if(bleed > 0) {
-            ctx.globalAlpha = bleed;
-            ctx.drawImage(canvas, 2, 0);
-            ctx.globalAlpha = 1.0;
-        }
+    // visual violence
+    "-vf", "scale=128:96:flags=neighbor,eq=contrast=1.4:saturation=0.5,noise=alls=20:allf=t+u",
 
-        if(rainGain) rainGain.gain.value = document.getElementById('storm').value / 200;
-        requestAnimationFrame(render);
-    }
+    // time damage
+    "-r", "10",
 
-    recBtn.onclick = () => {
-        if(audioCtx.state === 'suspended') audioCtx.resume();
-        if(!recorder || recorder.state === "inactive") {
-            chunks = [];
-            const stream = new MediaStream([canvas.captureStream(15).getTracks()[0], streamDest.stream.getTracks()[0]]);
-            recorder = new MediaRecorder(stream, { mimeType: 'video/mp4' });
-            recorder.ondataavailable = e => chunks.push(e.data);
-            recorder.onstop = () => {
-                const url = URL.createObjectURL(new Blob(chunks, { type: 'video/mp4' }));
-                dlBtn.style.display = "block";
-                dlBtn.onclick = () => { window.open(url, '_blank'); };
-            };
-            recorder.start();
-            recBtn.innerText = "BAKING...";
-        } else {
-            recorder.stop();
-            recBtn.innerText = "BAKE CURSED VIDEO";
-        }
-    };
+    // ancient codec
+    "-c:v", "mpeg1video",
+    "-b:v", "180k",
+    "-g", "5",
+    "-q:v", "31",
+
+    // audio abuse
+    "-ar", "8000",
+    "-ac", "1",
+    "-b:a", "32k",
+
+    "video_composessed.mpg"
+  );
+
+  const data = ffmpeg.FS("readFile", "video_composessed.mpg");
+  const blob = new Blob([data.buffer], { type: "video/mpeg" });
+  const url = URL.createObjectURL(blob);
+
+  if (isMobile) {
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "video_composessed.mpg";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  } else {
+    preview.src = url;
+  }
+}
 </script>
+
 </body>
 </html>
