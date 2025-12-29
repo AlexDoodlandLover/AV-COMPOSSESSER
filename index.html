@@ -19,14 +19,14 @@
     font-size: 1em;
   }
 
-  canvas {
-    display: none;
-  }
-
   video {
     margin-top: 16px;
     width: 320px;
     image-rendering: pixelated;
+  }
+
+  canvas {
+    display: none;
   }
 </style>
 </head>
@@ -34,94 +34,100 @@
 <body>
 
 <h2>Video Composesser™</h2>
-<p>Intentionally ruins video. No frame. No mercy.</p>
+<p>Ruins video correctly. Now mobile-safe.</p>
 
 <input type="file" id="file" accept="video/*"><br>
-<button onclick="composess()">Composess</button>
+<button id="go">Composess</button>
 
 <video id="preview" controls></video>
 <canvas id="c"></canvas>
 
 <script>
 const fileInput = document.getElementById("file");
+const button = document.getElementById("go");
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 const preview = document.getElementById("preview");
 
-function composess() {
-  const file = fileInput.files[0];
-  if (!file) return alert("give me a video");
+const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 
+button.onclick = async () => {
+  const file = fileInput.files[0];
+  if (!file) return alert("pick a video first");
+
+  // Create video INSIDE user gesture
   const video = document.createElement("video");
   video.src = URL.createObjectURL(file);
   video.muted = true;
-  video.play();
+  video.playsInline = true;
 
-  video.onloadedmetadata = () => {
-    const tinyW = 160;
-    const tinyH = Math.floor(tinyW * (video.videoHeight / video.videoWidth));
+  await video.play(); // now legal on mobile
 
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+  // Output resolution intentionally low (matches reference)
+  const outW = 320;
+  const outH = Math.floor(outW * (video.videoHeight / video.videoWidth));
 
-    const tiny = document.createElement("canvas");
-    tiny.width = tinyW;
-    tiny.height = tinyH;
-    const tctx = tiny.getContext("2d");
+  canvas.width = outW;
+  canvas.height = outH;
 
-    const stream = canvas.captureStream(12);
-    const recorder = new MediaRecorder(stream, { mimeType: "video/webm" });
-    const chunks = [];
+  const tiny = document.createElement("canvas");
+  tiny.width = 160;
+  tiny.height = Math.floor(160 * (outH / outW));
+  const tctx = tiny.getContext("2d");
 
-    recorder.ondataavailable = e => chunks.push(e.data);
-    recorder.onstop = () => {
-      const blob = new Blob(chunks, { type: "video/webm" });
-      const url = URL.createObjectURL(blob);
-      preview.src = url;
+  const stream = canvas.captureStream(10);
+  const recorder = new MediaRecorder(stream, { mimeType: "video/webm" });
+  const chunks = [];
 
+  recorder.ondataavailable = e => chunks.push(e.data);
+  recorder.onstop = () => {
+    const blob = new Blob(chunks, { type: "video/webm" });
+    const url = URL.createObjectURL(blob);
+
+    if (isMobile) {
       const a = document.createElement("a");
       a.href = url;
       a.download = "video_composessed.webm";
       a.click();
-    };
+    } else {
+      preview.src = url;
+    }
+  };
 
-    recorder.start();
+  recorder.start();
 
-    function draw() {
-      if (video.paused || video.ended) {
-        recorder.stop();
-        return;
-      }
-
-      // draw tiny
-      tctx.drawImage(video, 0, 0, tinyW, tinyH);
-
-      // upscale brutally
-      ctx.imageSmoothingEnabled = false;
-      ctx.drawImage(tiny, 0, 0, canvas.width, canvas.height);
-
-      // slight blur pass
-      ctx.globalAlpha = 0.25;
-      ctx.drawImage(canvas, 1, 0);
-      ctx.globalAlpha = 1;
-
-      // color crush
-      let img = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      let d = img.data;
-
-      for (let i = 0; i < d.length; i += 4) {
-        d[i]     = Math.floor(d[i] / 64) * 64;
-        d[i + 1] = Math.floor(d[i + 1] / 64) * 64;
-        d[i + 2] = Math.floor(d[i + 2] / 64) * 64;
-      }
-
-      ctx.putImageData(img, 0, 0);
-      requestAnimationFrame(draw);
+  // Fixed timestep loop (mobile-safe)
+  const interval = setInterval(() => {
+    if (video.ended) {
+      clearInterval(interval);
+      recorder.stop();
+      return;
     }
 
-    draw();
-  };
-}
+    // draw tiny
+    tctx.drawImage(video, 0, 0, tiny.width, tiny.height);
+
+    // brutal upscale
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(tiny, 0, 0, canvas.width, canvas.height);
+
+    // smear
+    ctx.globalAlpha = 0.3;
+    ctx.drawImage(canvas, 1, 0);
+    ctx.globalAlpha = 1;
+
+    // color crush
+    const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const d = img.data;
+    for (let i = 0; i < d.length; i += 4) {
+      d[i]     = (d[i] >> 5) << 5;
+      d[i + 1] = (d[i + 1] >> 5) << 5;
+      d[i + 2] = (d[i + 2] >> 5) << 5;
+    }
+    ctx.putImageData(img, 0, 0);
+
+  }, 100); // 10 fps
+};
 </script>
 
 </body>
